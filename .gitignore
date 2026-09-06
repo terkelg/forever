@@ -1,0 +1,9 @@
+.DS_Store
+*.blend[0-9]*
+__pycache__/
+*.pyc
+xcuserdata/
+DerivedData/
+.build/
+build/
+*.app/
