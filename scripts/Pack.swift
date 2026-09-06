@@ -18,10 +18,13 @@ func load(_ url: URL) throws -> CGImage {
     return image
 }
 
-func canvas(_ width: Int, _ height: Int) -> CGContext {
-    CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+func canvas(_ width: Int, _ height: Int) throws -> CGContext {
+    guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
               bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+        throw CocoaError(.fileWriteUnknown)
+    }
+    return context
 }
 
 func save(_ image: CGImage, to url: URL) throws {
@@ -32,6 +35,11 @@ func save(_ image: CGImage, to url: URL) throws {
     guard CGImageDestinationFinalize(target) else { throw CocoaError(.fileWriteUnknown) }
 }
 
+guard CommandLine.arguments.count == 4 else {
+    print("Usage: swift Pack.swift <frames directory> <resources directory> <asset catalog>")
+    exit(1)
+}
+
 let input = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
 let assets = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
@@ -39,19 +47,23 @@ let data = try Data(contentsOf: input.appendingPathComponent("animation.json"))
 let animation = try JSONDecoder().decode(Animation.self, from: data)
 let width = animation.columns * animation.size
 let height = animation.rows * animation.size
-let sheet = canvas(width, height)
+let sheet = try canvas(width, height)
 var frames: [CGImage] = []
 
 for index in 0..<animation.frames {
     let image = try load(input.appendingPathComponent(String(format: "%04d.png", index)))
+    guard image.width == animation.size, image.height == animation.size else {
+        throw CocoaError(.fileReadCorruptFile)
+    }
     frames.append(image)
     let x = (index % animation.columns) * animation.size
     // Pack rows from the top; the app crops CGImages using the same convention.
     let y = height - (index / animation.columns + 1) * animation.size
     sheet.draw(image, in: CGRect(x: x, y: y, width: animation.size, height: animation.size))
 }
-try save(sheet.makeImage()!, to: output.appendingPathComponent("beachball.png"))
-try data.write(to: output.appendingPathComponent("animation.json"))
+guard let atlas = sheet.makeImage() else { throw CocoaError(.fileWriteUnknown) }
+try save(atlas, to: output.appendingPathComponent("beachball.png"))
+try data.write(to: output.appendingPathComponent("animation.json"), options: .atomic)
 
 let art = assets.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("art")
 try FileManager.default.createDirectory(at: art, withIntermediateDirectories: true)
@@ -64,11 +76,12 @@ var entries: [[String: String]] = []
 for size in [16, 32, 128, 256, 512] {
     for scale in [1, 2] {
         let pixels = size * scale
-        let context = canvas(pixels, pixels)
+        let context = try canvas(pixels, pixels)
         context.interpolationQuality = .high
         context.draw(icon, in: CGRect(x: 0, y: 0, width: pixels, height: pixels))
         let name = "icon-\(size)@\(scale)x.png"
-        try save(context.makeImage()!, to: iconset.appendingPathComponent(name))
+        guard let resized = context.makeImage() else { throw CocoaError(.fileWriteUnknown) }
+        try save(resized, to: iconset.appendingPathComponent(name))
         entries.append(["idiom": "mac", "size": "\(size)x\(size)", "scale": "\(scale)x", "filename": name])
     }
 }
@@ -79,7 +92,9 @@ try JSONSerialization.data(withJSONObject: ["info": info], options: [.prettyPrin
 
 // A browser-viewable animation gives the render loop a quick visual check.
 let preview = art.appendingPathComponent("spin.gif")
-let gif = CGImageDestinationCreateWithURL(preview as CFURL, UTType.gif.identifier as CFString, frames.count, nil)!
+guard let gif = CGImageDestinationCreateWithURL(preview as CFURL, UTType.gif.identifier as CFString, frames.count, nil) else {
+    throw CocoaError(.fileWriteUnknown)
+}
 CGImageDestinationSetProperties(gif, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
 for frame in frames {
     CGImageDestinationAddImage(gif, frame, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 1.0 / Double(animation.fps)]] as CFDictionary)

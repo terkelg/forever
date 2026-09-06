@@ -25,9 +25,11 @@ final class Sprite: NSView {
         let animation = try JSONDecoder().decode(Animation.self, from: Data(contentsOf: manifest))
         guard animation.frames > 0, animation.fps > 0, animation.size > 0,
               animation.columns > 0, animation.rows > 0,
-              animation.frames <= animation.columns * animation.rows,
-              sheet.width == animation.columns * animation.size,
-              sheet.height == animation.rows * animation.size else {
+              sheet.width % animation.size == 0,
+              sheet.height % animation.size == 0,
+              sheet.width / animation.size == animation.columns,
+              sheet.height / animation.size == animation.rows,
+              (animation.frames - 1) / animation.columns < animation.rows else {
             throw CocoaError(.fileReadCorruptFile)
         }
         frames = try (0..<animation.frames).map { index in

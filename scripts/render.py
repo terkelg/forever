@@ -34,6 +34,7 @@ scene.render.resolution_x = args.size
 scene.render.resolution_y = args.size
 scene.render.resolution_percentage = 100
 scene.render.film_transparent = True
+scene.render.use_border = False
 scene.render.image_settings.file_format = "PNG"
 scene.render.image_settings.color_mode = "RGBA"
 scene.render.image_settings.color_depth = "8"
@@ -63,12 +64,13 @@ with tempfile.TemporaryDirectory(prefix="forever-frames-") as temporary:
     scene.render.filepath = str(directory / "icon.png")
     bpy.ops.render.render(write_still=True)
 
+    columns = min(args.columns, args.frames)
     manifest = {
         "frames": args.frames,
         "fps": args.fps,
         "size": args.size,
-        "columns": min(args.columns, args.frames),
-        "rows": (args.frames + min(args.columns, args.frames) - 1) // min(args.columns, args.frames),
+        "columns": columns,
+        "rows": (args.frames + columns - 1) // columns,
         "samples": args.samples,
     }
     (directory / "animation.json").write_text(json.dumps(manifest, indent=2) + "\n")

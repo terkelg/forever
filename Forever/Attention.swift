@@ -8,16 +8,17 @@ import SwiftUI
 final class Attention: NSObject, NSApplicationDelegate {
     private(set) var running = false
 
-    private var request: Int?
-    private var timer: Timer?
-    private var sprite: Sprite?
-    private var started: TimeInterval = 0
-    private var count = -1
-    private var window: NSWindow?
+    @ObservationIgnored private var request: Int?
+    @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var sprite: Sprite?
+    @ObservationIgnored private var started: TimeInterval?
+    @ObservationIgnored private var count = 0
+    @ObservationIgnored private var window: NSWindow?
 
     // Count the main jump once per recorded two-second cycle, not its rebounds.
     // AppKit exposes no bounce callback, so this remains a visual estimate.
     private let interval: TimeInterval = 2
+    private let retry: TimeInterval = 0.05
     private static let log = Logger(subsystem: "local.forever.prototype", category: "attention")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -25,6 +26,7 @@ final class Attention: NSObject, NSApplicationDelegate {
             try prepare()
         } catch {
             NSAlert(error: error).runModal()
+            NSApp.terminate(nil)
             return
         }
         // Install the transparent tile before making the app visible in the Dock.
@@ -40,28 +42,24 @@ final class Attention: NSObject, NSApplicationDelegate {
     }
 
     private func prepare() throws {
-        if sprite == nil { sprite = try Sprite(bundle: .main) }
-        NSApp.applicationIconImage = sprite?.frames.first
+        let sprite = try Sprite(bundle: .main)
+        self.sprite = sprite
+        NSApp.applicationIconImage = sprite.frames.first
         // Keep our transparent artwork even while idle; the bundled icon gets
         // a system backplate on newer macOS versions.
         NSApp.dockTile.contentView = sprite
         NSApp.dockTile.display()
     }
 
-    @objc func start() {
-        guard !running else { return }
-        do {
-            try prepare()
-        } catch {
-            NSAlert(error: error).runModal()
-            return
-        }
+    func start() {
+        guard !running, sprite != nil else { return }
         running = true
         NSApp.hide(nil)
         schedule()
     }
 
     private func schedule(after delay: TimeInterval = 0) {
+        guard running else { return }
         // Let Dock registration and activation changes reach the next event-loop
         // turn before sending the first request. An early request can be lost.
         NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(begin), object: nil)
@@ -71,53 +69,52 @@ final class Attention: NSObject, NSApplicationDelegate {
     @objc private func begin() {
         // Hiding can resign activation asynchronously; the delegate retries.
         guard running, request == nil, !NSApp.isActive, let sprite else { return }
-        count = -1
-        NSApp.dockTile.contentView = sprite
         let identifier = NSApp.requestUserAttention(.criticalRequest)
         guard identifier >= 0 else {
             // Launch Services may still be registering the Dock tile.
-            schedule(after: 0.05)
+            schedule(after: retry)
             return
         }
         request = identifier
-        started = ProcessInfo.processInfo.systemUptime
-        tick()
+        // Recovery keeps the same run clock; only Stop resets the estimate.
+        if started == nil { started = ProcessInfo.processInfo.systemUptime }
         let timer = Timer(timeInterval: 1 / sprite.fps, target: self,
                           selector: #selector(tick), userInfo: nil, repeats: true)
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
-        Self.log.info("Attention requested: \(self.request!, privacy: .public)")
+        tick()
+        Self.log.info("Attention requested: \(identifier, privacy: .public)")
     }
 
     @objc private func tick() {
-        guard running, !NSApp.isActive, let sprite else { return }
+        guard running, !NSApp.isActive, let sprite, let started else { return }
         let elapsed = ProcessInfo.processInfo.systemUptime - started
         // Derive both values from elapsed time so delayed ticks don't slow the loop.
         sprite.index = Int(elapsed * sprite.fps) % sprite.frames.count
         let next = 1 + Int(elapsed / interval)
         if next != count {
+            let renew = count > 0
+            count = next
+            NSApp.dockTile.badgeLabel = String(count)
             // The Dock can silence a request without notifying us. Renew at a
             // cycle boundary, keeping only one request and leaving the spin alone.
-            if count >= 1 {
+            if renew {
                 if let request { NSApp.cancelUserAttentionRequest(request) }
                 let identifier = NSApp.requestUserAttention(.criticalRequest)
                 guard identifier >= 0 else {
                     request = nil
-                    timer?.invalidate()
-                    timer = nil
-                    schedule(after: 0.05)
+                    suspend()
+                    schedule(after: retry)
                     return
                 }
                 request = identifier
                 Self.log.debug("Attention renewed for cycle \(next, privacy: .public)")
             }
-            count = next
-            NSApp.dockTile.badgeLabel = String(count)
         }
         NSApp.dockTile.display()
     }
 
-    func stop() {
+    private func suspend() {
         NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(begin), object: nil)
         if let request {
             NSApp.cancelUserAttentionRequest(request)
@@ -126,7 +123,13 @@ final class Attention: NSObject, NSApplicationDelegate {
         request = nil
         timer?.invalidate()
         timer = nil
+    }
+
+    func stop() {
         running = false
+        suspend()
+        started = nil
+        count = 0
         NSApp.dockTile.badgeLabel = nil
         sprite?.index = 0
         NSApp.dockTile.display()
@@ -140,10 +143,7 @@ final class Attention: NSObject, NSApplicationDelegate {
         // Xcode may activate us after launch has finished. Keep a requested run
         // alive; opening controls is handled explicitly by the Dock reopen event.
         guard running else { return }
-        if let request { NSApp.cancelUserAttentionRequest(request) }
-        request = nil
-        timer?.invalidate()
-        timer = nil
+        suspend()
         NSApp.hide(nil)
         schedule()
     }
