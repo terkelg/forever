@@ -8,7 +8,7 @@ struct ContentView: View {
             Button("Start", action: attention.start)
                 .keyboardShortcut(.defaultAction)
                 .disabled(attention.running)
-                .help("Hide this window and start bouncing. Return to Forever to stop.")
+                .help("Hide this window and start bouncing. Click the Dock icon to stop.")
             Button("Stop", action: attention.stop)
                 .keyboardShortcut(.cancelAction)
                 .disabled(!attention.running)

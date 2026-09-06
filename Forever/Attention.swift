@@ -22,6 +22,7 @@ final class Attention: NSObject, NSApplicationDelegate {
     private static let log = Logger(subsystem: "local.forever.prototype", category: "attention")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Self.log.info("Launch finished; preparing Dock icon")
         do {
             try prepare()
         } catch {
@@ -31,6 +32,7 @@ final class Attention: NSObject, NSApplicationDelegate {
         }
         // Install the transparent tile before making the app visible in the Dock.
         NSApp.setActivationPolicy(.regular)
+        Self.log.info("Dock icon installed")
         let menu = NSMenu()
         let item = NSMenuItem()
         let application = NSMenu()
@@ -54,7 +56,9 @@ final class Attention: NSObject, NSApplicationDelegate {
     func start() {
         guard !running, sprite != nil else { return }
         running = true
+        Self.log.info("Starting; active=\(NSApp.isActive, privacy: .public)")
         NSApp.hide(nil)
+        Self.log.info("Hide returned; scheduling attention")
         schedule()
     }
 
@@ -67,6 +71,7 @@ final class Attention: NSObject, NSApplicationDelegate {
     }
 
     @objc private func begin() {
+        Self.log.debug("Attention attempt; active=\(NSApp.isActive, privacy: .public)")
         // Hiding can resign activation asynchronously; the delegate retries.
         guard running, request == nil, !NSApp.isActive, let sprite else { return }
         let identifier = NSApp.requestUserAttention(.criticalRequest)
@@ -136,10 +141,12 @@ final class Attention: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidResignActive(_ notification: Notification) {
+        Self.log.info("Resigned active")
         schedule()
     }
 
     func applicationDidBecomeActive(_ notification: Notification) {
+        Self.log.info("Became active")
         // Xcode may activate us after launch has finished. Keep a requested run
         // alive; opening controls is handled explicitly by the Dock reopen event.
         guard running else { return }
@@ -172,9 +179,5 @@ final class Attention: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         stop()
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
     }
 }

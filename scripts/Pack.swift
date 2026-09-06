@@ -45,6 +45,13 @@ let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
 let assets = URL(fileURLWithPath: CommandLine.arguments[3], isDirectory: true)
 let data = try Data(contentsOf: input.appendingPathComponent("animation.json"))
 let animation = try JSONDecoder().decode(Animation.self, from: data)
+guard animation.frames > 0, animation.fps > 0, animation.size > 0,
+      animation.columns > 0, animation.rows > 0,
+      animation.columns <= Int.max / animation.size,
+      animation.rows <= Int.max / animation.size,
+      (animation.frames - 1) / animation.columns < animation.rows else {
+    throw CocoaError(.fileReadCorruptFile)
+}
 let width = animation.columns * animation.size
 let height = animation.rows * animation.size
 let sheet = try canvas(width, height)
